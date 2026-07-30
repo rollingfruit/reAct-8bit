@@ -1,0 +1,28 @@
+{
+  "name": "react-8bit-agent-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx server/index.ts",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx server/index.ts --production",
+    "test": "tsx --test tests/*.test.ts",
+    "test:e2e": "playwright test",
+    "plugin:setup": "tsx scripts/plugin-setup.ts",
+    "plugin:uninstall": "tsx scripts/plugin-uninstall.ts"
+  },
+  "dependencies": {
+    "vite": "^8.1.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@playwright/test": "^1.62.0",
+    "@types/node": "^22.19.19",
+    "tsx": "^4.22.1",
+    "typescript": "^5.9.3"
+  }
+}
