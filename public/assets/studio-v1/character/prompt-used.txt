@@ -1,0 +1,8 @@
+Create an exact 4x4 sprite sheet for one top-down 2D pixel-art cyber workshop agent character, 16 equal cells, for a 16-bit RPG overworld. The character is a friendly compact engineer with dark hair, warm skin, a bright cyan-blue utility jacket, navy trousers, tiny black boots, and a small glowing square chest badge. Crisp chunky pixels, strong dark outlines, full body visible, 3/4 view from slightly above, same character identity, same bounding box, and same pixel scale in every cell.
+
+Row 1 faces down: neutral, left foot forward, neutral, right foot forward.
+Row 2 faces left with the same four-frame walk cycle.
+Row 3 faces right with the same four-frame walk cycle.
+Row 4 faces up with the same four-frame walk cycle.
+
+The subject stays fully inside every cell with generous solid-magenta margin, identical scale, no detached effects, and no edge crossing. The background is flat #FF00FF only. No gradients, texture, shadows, grid lines, borders, labels, text, UI, or speech bubbles.

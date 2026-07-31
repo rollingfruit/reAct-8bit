@@ -1,10 +1,16 @@
 import type {
   ModelContextSnapshot,
   OpenCodeSession,
+  SceneCue,
   StudioConnectionStatus,
   StudioEvent,
+  TurnTrace,
 } from "../shared/types.js";
 import { ActionDirector, CssCharacterRenderer } from "./studio.js";
+import { compileScene, type PlaybackCut } from "./replay/scene-compiler.js";
+import { TimelinePlayer, type TimelineSnapshot } from "./replay/timeline-player.js";
+import { compileTurnTraces } from "./replay/trace-compiler.js";
+import { CanvasSceneRenderer } from "./scene/canvas-renderer.js";
 import "./style.css";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -35,6 +41,17 @@ app.innerHTML = `
         </div>
 
         <div id="room" class="room">
+          <canvas id="studioCanvas" class="studio-canvas" width="400" height="240" aria-label="ReAct 动画工作室"></canvas>
+          <button id="sceneCaption" class="scene-caption" type="button" hidden>
+            <strong></strong><span></span><small>点击查看真实证据</small>
+          </button>
+          <aside id="learningInspector" class="learning-inspector" hidden>
+            <header><span>LEARN / TRACE</span><button id="closeInspector" type="button">×</button></header>
+            <strong id="inspectorTitle"></strong>
+            <p id="inspectorExplanation"></p>
+            <details><summary>查看真实证据</summary><pre id="inspectorEvidence"></pre></details>
+            <button id="copyEvidence" type="button">COPY EVIDENCE</button>
+          </aside>
           <div class="room-glow"></div>
           <div class="wall-grid"></div>
           <div class="workstation terminal-station" data-zone="terminal">
@@ -62,6 +79,27 @@ app.innerHTML = `
           <div class="answer-zone" data-zone="answer"><span>ANSWER</span><div>▰</div></div>
           <div id="actorLayer" class="actor-layer"></div>
           <div class="floor-lines"></div>
+        </div>
+
+        <div id="replayPlayer" class="replay-player" data-status="paused">
+          <div class="transport-controls">
+            <button id="replayRestart" type="button" title="重新开始">↺</button>
+            <button id="replayPrev" type="button" title="上一步">◀</button>
+            <button id="replayPlay" class="primary" type="button" title="播放/暂停">▶</button>
+            <button id="replayNext" type="button" title="下一步">▶|</button>
+          </div>
+          <div class="timeline-wrap">
+            <input id="timelineRange" type="range" min="0" max="1000" value="0" aria-label="回放时间轴">
+            <div><span id="timelineLabel">选择一条用户消息开始学习</span><time id="timelineTime">00:00 / 00:00</time></div>
+          </div>
+          <div class="playback-options">
+            <select id="playbackSpeed" aria-label="播放速度">
+              <option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option>
+            </select>
+            <button id="cutToggle" type="button" data-cut="director">导演版</button>
+            <button id="cameraToggle" type="button" aria-pressed="true">跟随</button>
+            <button id="liveToggle" type="button" title="退出回放，追到最新实时事件">LIVE</button>
+          </div>
         </div>
 
         <div class="phase-strip">
@@ -121,8 +159,10 @@ app.innerHTML = `
 
 const room = document.querySelector<HTMLElement>("#room")!;
 const actorLayer = document.querySelector<HTMLElement>("#actorLayer")!;
-const renderer = new CssCharacterRenderer(room, actorLayer);
-const director = new ActionDirector(renderer);
+const cssRenderer = new CssCharacterRenderer(room, actorLayer);
+const director = new ActionDirector(cssRenderer);
+const canvasRenderer = new CanvasSceneRenderer(document.querySelector<HTMLCanvasElement>("#studioCanvas")!);
+const useCssFallback = new URL(location.href).searchParams.get("renderer") === "css";
 const messagesElement = document.querySelector<HTMLElement>("#messages")!;
 const sessionSelect = document.querySelector<HTMLSelectElement>("#sessionSelect")!;
 const promptInput = document.querySelector<HTMLTextAreaElement>("#promptInput")!;
@@ -130,17 +170,31 @@ const connectionPill = document.querySelector<HTMLElement>("#connectionPill")!;
 const contextNotice = document.querySelector<HTMLElement>("#contextNotice")!;
 const jumpLatest = document.querySelector<HTMLButtonElement>("#jumpLatest")!;
 const toast = document.querySelector<HTMLElement>("#toast")!;
+const sceneCaption = document.querySelector<HTMLButtonElement>("#sceneCaption")!;
+const learningInspector = document.querySelector<HTMLElement>("#learningInspector")!;
+const timelineRange = document.querySelector<HTMLInputElement>("#timelineRange")!;
+const timelineLabel = document.querySelector<HTMLElement>("#timelineLabel")!;
+const timelineTime = document.querySelector<HTMLTimeElement>("#timelineTime")!;
+const replayPlay = document.querySelector<HTMLButtonElement>("#replayPlay")!;
 const cardIndex = new Map<string, HTMLElement>();
 const contextStore = new Map<string, ModelContextSnapshot>();
-const replayStore = new Map<string, StudioEvent[]>();
+const replayStore = new Map<string, TurnTrace>();
 const activeAgents = new Set<string>();
 const initialUrl = new URL(location.href);
 let currentSession = initialUrl.searchParams.get("session") ?? "";
 let routedMessageId = initialUrl.searchParams.get("message") ?? "";
+let routedCueId = initialUrl.searchParams.get("cue") ?? "";
 let eventCount = 0;
 let followLatest = true;
-let replayToken = 0;
 let replayRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let activeTrace: TurnTrace | undefined;
+let activeCues: SceneCue[] = [];
+let activeCut: PlaybackCut = "director";
+let lastCueId = "";
+let completionNotified = false;
+let lastLiveEvent: StudioEvent | undefined;
+
+const player = new TimelinePlayer((snapshot) => updatePlayback(snapshot));
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -210,19 +264,22 @@ function makeCard(kind: string, label: string, content: string, meta = "") {
   return card;
 }
 
-function routeUrl(sessionId: string, messageId = "") {
+function routeUrl(sessionId: string, messageId = "", cueId = "") {
   const url = new URL(location.href);
   if (sessionId) url.searchParams.set("session", sessionId);
   else url.searchParams.delete("session");
   if (messageId) url.searchParams.set("message", messageId);
   else url.searchParams.delete("message");
+  if (cueId) url.searchParams.set("cue", cueId);
+  else url.searchParams.delete("cue");
   return url;
 }
 
-function updateRoute(sessionId: string, messageId = "", push = false) {
+function updateRoute(sessionId: string, messageId = "", push = false, cueId = "") {
   routedMessageId = messageId;
-  const url = routeUrl(sessionId, messageId);
-  history[push ? "pushState" : "replaceState"]({ sessionId, messageId }, "", url);
+  routedCueId = cueId;
+  const url = routeUrl(sessionId, messageId, cueId);
+  history[push ? "pushState" : "replaceState"]({ sessionId, messageId, cueId }, "", url);
   return url;
 }
 
@@ -236,110 +293,70 @@ function focusMessage(messageId: string, smooth = false) {
   target.scrollIntoView({ block: "center", behavior: smooth ? "smooth" : "auto" });
 }
 
-function historyReplayEvent(
-  message: any,
-  part: any,
-  sequence: number,
-  phase: StudioEvent["phase"],
-  status: StudioEvent["status"],
-  title: string,
-  timestamp: number,
-): StudioEvent {
-  return {
-    id: `replay:${message.info.id}:${part.id ?? sequence}:${phase}:${status}`,
-    sequence,
-    timestamp,
-    sessionId: String(message.info.sessionID ?? currentSession),
-    messageId: String(message.info.id),
-    callId: part.callID ? String(part.callID) : undefined,
-    agentId: String(message.info.agent ?? message.info.mode ?? "build"),
-    phase,
-    kind: `replay.${part.type}`,
-    status,
-    title,
-    payload: part,
-  };
-}
-
 function rebuildReplayStore(history: any[]) {
   replayStore.clear();
-  const assistantsByUser = new Map<string, any[]>();
-  for (const message of history) {
-    if (message.info?.role !== "assistant" || !message.info?.parentID) continue;
-    const parentId = String(message.info.parentID);
-    const messages = assistantsByUser.get(parentId) ?? [];
-    messages.push(message);
-    assistantsByUser.set(parentId, messages);
-  }
-
-  for (const [userMessageId, messages] of assistantsByUser) {
-    messages.sort((a, b) => Number(a.info?.time?.created ?? 0) - Number(b.info?.time?.created ?? 0));
-    const finalMessage = messages.at(-1);
-    if (finalMessage?.info?.finish !== "stop" || !finalMessage.info?.time?.completed) continue;
-
-    const events: StudioEvent[] = [];
-    let sequence = 0;
-    for (const message of messages) {
-      const created = Number(message.info?.time?.created ?? Date.now());
-      for (let partIndex = 0; partIndex < (message.parts ?? []).length; partIndex += 1) {
-        const part = message.parts[partIndex];
-        const fallback = created + partIndex * 10;
-        if (part.type === "step-start") {
-          events.push(historyReplayEvent(message, part, ++sequence, "thought", "running", "开始新一轮推理", fallback));
-        } else if (part.type === "reasoning") {
-          const start = Number(part.time?.start ?? fallback);
-          events.push(historyReplayEvent(message, part, ++sequence, "thought", "running", "正在分析", start));
-          events.push(historyReplayEvent(message, part, ++sequence, "thought", "complete", "完成思考", Number(part.time?.end ?? start + 1)));
-        } else if (part.type === "tool") {
-          const start = Number(part.state?.time?.start ?? fallback);
-          events.push(historyReplayEvent(message, part, ++sequence, "action", "running", String(part.tool ?? "tool"), start));
-          const failed = part.state?.status === "error";
-          events.push(historyReplayEvent(
-            message,
-            part,
-            ++sequence,
-            "observation",
-            failed ? "error" : "success",
-            failed ? "工具执行失败" : "工具执行完成",
-            Number(part.state?.time?.end ?? start + 1),
-          ));
-        } else if (part.type === "text") {
-          const start = Number(part.time?.start ?? fallback);
-          events.push(historyReplayEvent(message, part, ++sequence, "answer", "running", "正在回复", start));
-          events.push(historyReplayEvent(message, part, ++sequence, "answer", "complete", "回复完成", Number(part.time?.end ?? message.info?.time?.completed ?? start + 1)));
-        }
-      }
-    }
-    if (events.length) replayStore.set(userMessageId, events.sort((a, b) => a.timestamp - b.timestamp || a.sequence - b.sequence));
+  for (const [messageId, trace] of compileTurnTraces(history, contextStore.values())) {
+    if (trace.status === "complete" || trace.status === "error") replayStore.set(messageId, trace);
   }
 }
 
-async function playReplay(messageId: string, button: HTMLButtonElement) {
-  const events = replayStore.get(messageId);
-  if (!events?.length) return;
-  const token = ++replayToken;
-  document.querySelectorAll<HTMLButtonElement>(".replay-button").forEach((item) => (item.disabled = true));
-  room.classList.add("is-replaying");
-  button.textContent = "■ 回放中";
-  focusMessage(messageId, true);
-  try {
-    await director.replay(events, (item, index, total) => {
-      button.textContent = `■ ${index + 1}/${total}`;
-      document.querySelector("#currentActivity")!.textContent = `回放 ${index + 1}/${total} · ${item.title}`;
-    });
-    if (token === replayToken) {
-      document.querySelector("#currentActivity")!.textContent = `回放完成 · ${events.length} 个真实事件`;
-      showToast("ReAct 回放完成");
+function formatTime(value: number) {
+  const seconds = Math.max(0, Math.round(value / 1000));
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function sourceForCue(cue?: SceneCue) {
+  if (!cue || !activeTrace) return undefined;
+  return activeTrace.nodes.find((node) => cue.traceNodeIds.includes(node.id));
+}
+
+function updatePlayback(snapshot: TimelineSnapshot) {
+  canvasRenderer.draw(activeCues, snapshot);
+  replayPlay.textContent = snapshot.status === "playing" ? "Ⅱ" : "▶";
+  timelineRange.value = snapshot.duration ? String(Math.round((snapshot.time / snapshot.duration) * 1000)) : "0";
+  timelineTime.textContent = `${formatTime(snapshot.time)} / ${formatTime(snapshot.duration)}`;
+  document.querySelector("#replayPlayer")?.setAttribute("data-status", snapshot.status);
+  room.classList.toggle("is-replaying", ["playing", "paused", "seeking"].includes(snapshot.status) && Boolean(activeCues.length));
+  const cue = snapshot.cue;
+  if (cue) {
+    timelineLabel.textContent = `${snapshot.cueIndex + 1}/${activeCues.length} · ${cue.explanation ?? cue.caption ?? cue.action}`;
+    document.querySelector("#currentActivity")!.textContent =
+      `回放 ${snapshot.cueIndex + 1}/${activeCues.length} · ${cue.phase.toUpperCase()} · ${cue.explanation ?? cue.action}`;
+    sceneCaption.hidden = !(cue.caption || cue.explanation);
+    sceneCaption.querySelector("strong")!.textContent = cue.caption ?? cue.explanation ?? "";
+    sceneCaption.querySelector("span")!.textContent = cue.caption && cue.explanation ? cue.explanation : "";
+    sceneCaption.dataset.cueId = cue.id;
+    messagesElement.querySelectorAll(".cue-target").forEach((element) => element.classList.remove("cue-target"));
+    if (cue.sourceMessageId) {
+      const card = [...messagesElement.querySelectorAll<HTMLElement>("[data-message-id]")]
+        .find((element) => element.dataset.messageId === cue.sourceMessageId);
+      card?.classList.add("cue-target");
     }
-  } finally {
-    if (token === replayToken) {
-      room.classList.remove("is-replaying");
-      document.querySelectorAll<HTMLButtonElement>(".replay-button").forEach((item) => {
-        item.disabled = false;
-        item.textContent = "▶ 回放";
-      });
+    if (cue.id !== lastCueId && activeTrace) {
+      lastCueId = cue.id;
+      updateRoute(currentSession, activeTrace.userMessageId, false, cue.id);
     }
+  } else {
+    sceneCaption.hidden = true;
   }
+  if (snapshot.status === "completed" && !completionNotified) {
+    completionNotified = true;
+    room.classList.remove("is-replaying");
+    showToast(`ReAct 回放完成 · ${activeCues.length} 个镜头`);
+  }
+}
+
+function selectReplay(messageId: string, cueId = "", autoplay = true) {
+  const trace = replayStore.get(messageId);
+  if (!trace) return;
+  activeTrace = trace;
+  activeCues = compileScene(trace, activeCut);
+  completionNotified = false;
+  lastCueId = "";
+  player.setCues(activeCues, cueId);
+  focusMessage(messageId, true);
+  updateRoute(currentSession, messageId, false, cueId || activeCues[0]?.id);
+  if (autoplay) player.play();
 }
 
 function attachReplayButton(card: HTMLElement, messageId: string) {
@@ -349,7 +366,7 @@ function attachReplayButton(card: HTMLElement, messageId: string) {
   button.type = "button";
   button.textContent = "▶ 回放";
   button.title = "在 Agent 工作室回放这次完整 ReAct 过程";
-  button.addEventListener("click", () => void playReplay(messageId, button));
+  button.addEventListener("click", () => selectReplay(messageId));
   card.querySelector("header")?.append(button);
 }
 
@@ -401,7 +418,9 @@ function identifyMessage(card: HTMLElement, messageId: string, userMessage = fal
 
 function addStudioEvent(event: StudioEvent) {
   if (currentSession && event.sessionId !== currentSession && event.sessionId !== "global") return;
-  director.handle(event);
+  lastLiveEvent = event;
+  if (useCssFallback) director.handle(event);
+  else if (!activeCues.length || player.snapshot.status === "completed") canvasRenderer.showLive(event);
   activeAgents.add(`${event.sessionId}:${event.agentId}`);
   eventCount += 1;
   document.querySelector("#eventCount")!.textContent = String(eventCount);
@@ -478,6 +497,7 @@ function addContext(snapshot: ModelContextSnapshot) {
   messagesElement.append(details);
   trimCards();
   scrollToLatest();
+  scheduleReplayRefresh();
 }
 
 function renderHistory(data: any[]) {
@@ -516,6 +536,9 @@ function renderHistory(data: any[]) {
   }
   scrollToLatest(true);
   if (routedMessageId) requestAnimationFrame(() => focusMessage(routedMessageId));
+  if (routedMessageId && routedCueId && replayStore.has(routedMessageId)) {
+    requestAnimationFrame(() => selectReplay(routedMessageId, routedCueId, false));
+  }
 }
 
 async function loadSessions(preferred?: string, messageId = "", updateUrl = true) {
@@ -550,14 +573,18 @@ async function selectSession(
 ) {
   currentSession = sessionId;
   routedMessageId = options.messageId ?? "";
+  routedCueId = new URL(location.href).searchParams.get("cue") ?? "";
   director.reset();
+  player.setCues([]);
+  activeTrace = undefined;
+  activeCues = [];
   eventCount = 0;
   activeAgents.clear();
   document.querySelector("#eventCount")!.textContent = "0";
   document.querySelector("#agentCount")!.textContent = "0";
   const history = await request<any[]>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
   renderHistory(history);
-  if (options.updateUrl !== false) updateRoute(sessionId, routedMessageId);
+  if (options.updateUrl !== false) updateRoute(sessionId, routedMessageId, false, routedCueId);
 }
 
 const stream = new EventSource("/api/stream");
@@ -644,6 +671,115 @@ document.querySelector("#abortButton")!.addEventListener("click", async () => {
   }
 });
 
+function openInspector(cue?: SceneCue) {
+  if (!cue) return;
+  const source = sourceForCue(cue);
+  learningInspector.hidden = false;
+  document.querySelector("#inspectorTitle")!.textContent = cue.caption ?? cue.action;
+  document.querySelector("#inspectorExplanation")!.textContent =
+    cue.explanation ?? (cue.evidence === "exact" ? "此镜头直接来自 OpenCode 的真实数据。" : "此镜头是基于真实事件的固定可视化说明。");
+  document.querySelector("#inspectorEvidence")!.textContent = JSON.stringify({
+    cue: {
+      id: cue.id,
+      evidence: cue.evidence,
+      action: cue.action,
+      traceNodeIds: cue.traceNodeIds,
+    },
+    source,
+  }, null, 2);
+}
+
+sceneCaption.addEventListener("click", () => openInspector(player.snapshot.cue));
+document.querySelector("#closeInspector")!.addEventListener("click", () => {
+  learningInspector.hidden = true;
+});
+document.querySelector("#copyEvidence")!.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(document.querySelector("#inspectorEvidence")!.textContent ?? "");
+    showToast("真实证据已复制");
+  } catch {
+    showToast("复制失败", true);
+  }
+});
+
+document.querySelector("#replayRestart")!.addEventListener("click", () => {
+  player.seek(0);
+  player.play();
+});
+document.querySelector("#replayPrev")!.addEventListener("click", () => player.step(-1));
+replayPlay.addEventListener("click", () => player.toggle());
+document.querySelector("#replayNext")!.addEventListener("click", () => player.step(1));
+timelineRange.addEventListener("input", () => {
+  player.seek((Number(timelineRange.value) / 1000) * player.snapshot.duration);
+});
+document.querySelector<HTMLSelectElement>("#playbackSpeed")!.addEventListener("change", (event) => {
+  player.setSpeed(Number((event.currentTarget as HTMLSelectElement).value));
+});
+document.querySelector("#cutToggle")!.addEventListener("click", (event) => {
+  const button = event.currentTarget as HTMLButtonElement;
+  activeCut = activeCut === "director" ? "compact" : "director";
+  button.dataset.cut = activeCut;
+  button.textContent = activeCut === "director" ? "导演版" : "精简版";
+  if (activeTrace) selectReplay(activeTrace.userMessageId, "", false);
+});
+document.querySelector("#cameraToggle")!.addEventListener("click", (event) => {
+  const button = event.currentTarget as HTMLButtonElement;
+  const following = button.getAttribute("aria-pressed") !== "true";
+  button.setAttribute("aria-pressed", String(following));
+  button.textContent = following ? "跟随" : "全景";
+  room.classList.toggle("camera-overview", !following);
+});
+document.querySelector("#liveToggle")!.addEventListener("click", () => {
+  activeTrace = undefined;
+  activeCues = [];
+  lastCueId = "";
+  player.setCues([]);
+  room.classList.remove("is-replaying");
+  sceneCaption.hidden = true;
+  if (lastLiveEvent) canvasRenderer.showLive(lastLiveEvent);
+  document.querySelector("#currentActivity")!.textContent = "LIVE · 正在追踪最新事件";
+  updateRoute(currentSession, "", false);
+});
+
+function stepChapter(direction: -1 | 1) {
+  const snapshot = player.snapshot;
+  if (!activeCues.length) return;
+  const currentIndex = Math.max(0, snapshot.cueIndex);
+  const currentPhase = activeCues[currentIndex]?.phase;
+  let target = currentIndex + direction;
+  if (direction > 0) {
+    while (target < activeCues.length && activeCues[target]?.phase === currentPhase) target += 1;
+  } else {
+    while (target >= 0 && activeCues[target]?.phase === currentPhase) target -= 1;
+    const previousPhase = activeCues[Math.max(0, target)]?.phase;
+    while (target > 0 && activeCues[target - 1]?.phase === previousPhase) target -= 1;
+  }
+  const cue = activeCues[Math.max(0, Math.min(activeCues.length - 1, target))];
+  if (cue) player.seek(cue.start);
+}
+
+window.addEventListener("keydown", (event) => {
+  const target = event.target as HTMLElement | null;
+  if (target?.matches("textarea,input,select")) return;
+  if (event.code === "Space") {
+    event.preventDefault();
+    player.toggle();
+  } else if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    if (event.shiftKey) stepChapter(-1);
+    else player.step(-1);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    if (event.shiftKey) stepChapter(1);
+    else player.step(1);
+  } else if (["1", "2", "3"].includes(event.key)) {
+    const speeds = { "1": 0.5, "2": 1, "3": 2 } as const;
+    const speed = speeds[event.key as keyof typeof speeds];
+    player.setSpeed(speed);
+    document.querySelector<HTMLSelectElement>("#playbackSpeed")!.value = String(speed);
+  }
+});
+
 const attachDialog = document.querySelector<HTMLDialogElement>("#attachDialog")!;
 document.querySelector("#attachButton")!.addEventListener("click", () => attachDialog.showModal());
 document.querySelector<HTMLFormElement>("#attachForm")!.addEventListener("submit", async (event) => {
@@ -666,6 +802,7 @@ window.addEventListener("popstate", () => {
   const url = new URL(location.href);
   const sessionId = url.searchParams.get("session") ?? "";
   const messageId = url.searchParams.get("message") ?? "";
+  routedCueId = url.searchParams.get("cue") ?? "";
   void loadSessions(sessionId, messageId, false).catch((error) => showToast(error.message, true));
 });
 

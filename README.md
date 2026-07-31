@@ -1,16 +1,51 @@
 # ReAct 8-bit Agent Studio
 
-把 OpenCode 的真实推理、工具调用与观察结果，映射成一间会移动的 8-bit Agent 工作室。
+把 OpenCode 的真实 ReAct 交互编译成一部可以暂停、逐步和追溯证据的像素动画。它不是给 Agent 加一段虚构的“内心戏”，而是把已经发生的 reasoning、工具调用、观察结果和回答变成大众能看懂的小剧场。
 
-## 能做什么
+## 现在可以看到什么
 
-- 自动探测并启动本机 OpenCode Server，或连接一个已知 Server。
-- 优先消费 `/api/event`，自动回退 `/event`。
-- 在 CSS 像素房间里呈现 Thought → Action → Observation → Answer。
-- 为 build、plan、explore 与自定义 Agent 分配稳定人格。
-- 在右侧查看会话、reasoning、工具输入/输出和错误。
-- 使用可选 OpenCode 插件捕获每次模型调用的 Semantic Context。
-- Context 完整、不截断、递归脱敏、仅驻留内存，可一键复制。
+- 实时观看 Agent 收信、思考、前往工作站、操作工具、读取结果并发布答案。
+- 一次完整交互结束后，点击用户消息上的“回放”，观看完整动画分镜。
+- 暂停、上一步/下一步、拖动时间轴、0.5×/1×/2×、导演版/精简版。
+- 点击动画字幕打开学习检查器，从通俗说明回到真实 reasoning、工具 input/output 和消息标识。
+- 每个分镜都可以通过 `session + message + cue` URL 分享和刷新定位。
+- 右侧继续提供完整 Chatbox 与可展开、可复制的 Semantic Context JSON。
+
+首版为 `bash`、`read/glob/grep`、`edit/write/patch`、`websearch/webfetch`、`todo`、`task/subagent` 编排了独立剧情。未知工具会进入 LAB，依次演出输入、执行和输出，不会丢事件。
+
+## 从 Trace 到动画
+
+```text
+OpenCode messages / SSE / Context
+              │
+              ▼
+TurnTrace（一次真实用户交互）
+              │  SceneCompiler + ToolSceneAdapter
+              ▼
+SceneCue[]（带证据引用的分镜）
+              │  TimelinePlayer 虚拟时间
+              ▼
+Canvas 400×240 像素房间 + DOM Chatbox / Inspector
+```
+
+三种证据等级：
+
+- `exact`：字幕或字段直接来自 OpenCode 原始数据。
+- `derived`：使用固定规则解释真实工具行为，例如“Agent 把查询卡交给网络搜索工具”。
+- `ambient`：灯光、粒子、灰尘等无语义装饰。
+
+所有非装饰镜头都携带 `traceNodeIds`。reasoning 只按原始标点切成字幕节拍，不调用第二个 LLM、不补写思维；完整原文与 JSON 始终可以在检查器中查看。Semantic Context 是脱敏后的语义快照，不宣称与 Provider 最终 HTTP body 字节级一致。
+
+## 播放器
+
+- `Space`：播放/暂停
+- `←` / `→`：上一步/下一步
+- `Shift + ←` / `Shift + →`：上一章/下一章
+- `1` / `2` / `3`：0.5× / 1× / 2×
+- `LIVE`：退出历史回放，追到最新实时事件
+- 点击场景字幕：打开这一镜的说明和原始证据
+
+浏览器开启 `prefers-reduced-motion` 时会关闭多余过渡。Canvas 使用固定 `400×240` 内部坐标与最近邻缩放，房间不会被长消息撑大；Chatbox 独立滚动。
 
 ## 启动
 
@@ -30,27 +65,13 @@ npm run plugin:setup
 ./studio.sh status   # 查看 PID 与实际端口
 ```
 
-如果显式设置 `STUDIO_PORT` 或 `OPENCODE_PORT`，脚本会在端口被占用时直接报错，不会连接或终止占用者。首次安装 Context 插件后需要重启 OpenCode；Studio 自己管理的 OpenCode 会随脚本重启。
+如果显式设置 `STUDIO_PORT` 或 `OPENCODE_PORT`，脚本会在端口被占用时直接报错。首次安装 Context 插件后需要重启 OpenCode；不安装插件也可以运行，只是没有模型调用 Context 卡。
 
-不安装插件也可以使用工作室，只是不会出现 Semantic Context 卡片。
-
-## 连接模式
-
-默认使用 Managed 模式：
-
-- 尝试连接 `http://127.0.0.1:4096`。
-- 端口没有服务时，自动启动 `opencode serve`。
-- Managed Server 使用随机 Basic Auth 密码并只绑定 localhost。
-
-也可以点击右上角齿轮，连接已有 OpenCode Server。启动已有 TUI 时需要给它一个已知端口：
+也可以点击右上角齿轮 Attach 到已有 OpenCode Server：
 
 ```bash
 opencode --hostname 127.0.0.1 --port 4096
-```
 
-可通过环境变量覆盖默认值：
-
-```bash
 OPENCODE_URL=http://127.0.0.1:4096 \
 OPENCODE_SERVER_PASSWORD=your-password \
 OPENCODE_DIRECTORY=/path/to/project \
@@ -61,26 +82,19 @@ npm run dev
 
 - macOS：探测 PATH、`~/.opencode/bin/opencode`、Homebrew。
 - Windows Native：探测 `where.exe`、用户安装目录、NPM、Scoop。
-- WSL：作为独立平台运行，保留 Linux 路径；Windows 浏览器连接 WSL 的 localhost Server。
-- 使用 `opencode debug paths` 获取真实配置目录，不硬编码配置路径。
+- WSL：作为独立平台运行并保留 Linux 路径。
+- 使用 `opencode debug paths` 获取真实配置目录，不硬编码 Unix 路径。
 
-Windows 第一版具有 adapter 与自动测试覆盖，但仍建议优先使用 WSL。
+Windows adapter 与 CI 已保留；当前实机开发和验收以 macOS 为主。
 
-## 插件管理
+## 原创像素资产
 
-```bash
-npm run plugin:setup
-npm run plugin:uninstall
-```
+运行时资产位于 `public/assets/studio-v1/`：
 
-安装脚本会：
+- `character/`：四方向行走表。
+- `actions/`：think、type、read、wait、speak、success、error 动作表。
 
-- 询问 OpenCode 自己的 config 路径。
-- 备份同名旧插件。
-- 安装 `react-8bit-studio.js`。
-- 创建仅供 localhost capture endpoint 使用的随机 token。
-
-卸载只删除本项目插件与 capture 配置，不删除备份。
+每组均保留生成提示词、原始清理图、透明 spritesheet、逐帧 PNG、GIF 预览和 `pipeline-meta.json` QC 信息。素材使用项目内的生成与确定性后处理流程原创制作，没有复制下列参考项目的视觉资产。缺失素材时 Canvas 会回退到程序绘制角色。
 
 ## 验证
 
@@ -90,6 +104,16 @@ npm run test:e2e
 npm run build
 ```
 
-GitHub Actions 会在 macOS 与 Windows 上运行 adapter/unit/build，并在 Linux Chromium 中执行浏览器 E2E。
+测试覆盖 Trace 归属、确定性分镜、工具字段映射、Timeline seek/step/speed、资产 QC、消息 URL 和浏览器回放。项目是本地应用，因此不作为纯静态页面发布。
 
-项目是本地应用：浏览器、Node bridge、OpenCode 和 capture 插件共同工作，因此不发布为公共静态站点。
+## Acknowledgements
+
+感谢这些项目和研究提供设计启发：
+
+- [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents)：像素办公室、角色状态机与工具动作表达。
+- [AI Town](https://github.com/a16z-infra/ai-town)：2D Agent 世界、tilemap 与场景分层。
+- [Claude Office](https://github.com/paulrobello/claude-office)：主 Agent / Subagent、状态气泡与工作空间表达。
+- [Generative Agents](https://arxiv.org/abs/2304.03442)：把 Agent 行为放进空间化环境进行观察的研究启发。
+- [Phaser Timeline](https://docs.phaser.io/api-documentation/class/time-timeline)：播放器时间线语义参考。
+
+本项目没有直接复用上述项目代码或资产；后续若引入代码片段，会在对应文件保留许可证与逐项来源。

@@ -1,0 +1,8 @@
+Create an exact 4x4 pixel-art action sprite sheet of the same friendly compact cyber workshop engineer: dark hair, warm medium skin, navy outfit, bright cyan jacket panels and cyan boots. Orthographic top-down 3/4 RPG view, chunky 8-bit pixels, consistent proportions, same fixed feet baseline and centered anchor in every cell.
+
+Row 1 — THINK: neutral pause, hand to chin, look upward, small cyan idea spark.
+Row 2 — TYPE: four-frame seamless typing loop with alternating hands over a tiny dark keyboard.
+Row 3 — READ: hold a cream paper, open it, scan it, lower it.
+Row 4 — REACT: patient wait, speak with a tiny cyan speech mark, success with both hands raised, error with a red warning spark.
+
+Flat uniform #FF00FF magenta background only. No gradients, no shadows outside the character, no text, no labels, no borders, no grid lines. Keep every pose fully contained inside its cell with generous spacing.

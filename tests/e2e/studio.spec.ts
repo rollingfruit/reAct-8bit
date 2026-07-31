@@ -9,6 +9,8 @@ test("renders the complete workshop and responsive chat controls", async ({ page
   await expect(page.locator('[data-zone="code"]')).toContainText("CODE");
   await expect(page.locator('[data-zone="portal"]')).toContainText("WEB");
   await expect(page.locator('[data-zone="subagent"]')).toContainText("SPAWN");
+  await expect(page.locator("#studioCanvas")).toBeVisible();
+  await expect(page.locator("#replayPlayer")).toBeVisible();
   await expect(page.getByLabel("输入任务")).toBeVisible();
   await expect(page.getByRole("button", { name: "SEND ↗" })).toBeVisible();
 });
@@ -97,9 +99,18 @@ test("replays a completed ReAct turn from its user message card", async ({ page 
   await page.goto(`/?session=${session.id}&message=msg_user_replay`);
   const replay = page.getByRole("button", { name: "▶ 回放" });
   await expect(replay).toBeVisible();
+  await page.getByLabel("播放速度").selectOption("2");
   await replay.click();
   await expect(page.locator("#room")).toHaveClass(/is-replaying/);
   await expect(page.locator("#currentActivity")).toContainText("回放");
-  await expect(page.getByText("ReAct 回放完成")).toBeVisible({ timeout: 10_000 });
+  await expect(page).toHaveURL(/cue=/);
+  await page.locator("#replayPlay").click();
+  await expect(page.locator("#replayPlayer")).toHaveAttribute("data-status", "paused");
+  await page.locator("#replayNext").click();
+  await expect(page.locator("#sceneCaption")).toBeVisible();
+  await page.locator("#sceneCaption").click();
+  await expect(page.locator("#learningInspector")).toBeVisible();
+  await page.locator("#replayPlay").click();
+  await expect(page.getByText(/ReAct 回放完成/)).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("#room")).not.toHaveClass(/is-replaying/);
 });
