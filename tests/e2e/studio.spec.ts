@@ -11,6 +11,11 @@ test("renders the complete workshop and responsive chat controls", async ({ page
   await expect(page.locator('[data-zone="subagent"]')).toContainText("SPAWN");
   await expect(page.locator("#studioCanvas")).toBeVisible();
   await expect(page.locator("#replayPlayer")).toBeVisible();
+  const canvasRatio = await page.locator("#studioCanvas").evaluate((canvas) => {
+    const bounds = canvas.getBoundingClientRect();
+    return bounds.width / bounds.height;
+  });
+  expect(canvasRatio).toBeCloseTo(400 / 240, 2);
   await expect(page.getByLabel("输入任务")).toBeVisible();
   await expect(page.getByRole("button", { name: "SEND ↗" })).toBeVisible();
 });

@@ -161,7 +161,21 @@ const fallbackAdapter: ToolSceneAdapter = {
   },
 };
 
-const adapters = [webAdapter, terminalAdapter, archiveAdapter, codeAdapter, taskAdapter, fallbackAdapter];
+// Specific task tools must win before the generic `write` matcher:
+// `todowrite` contains the substring "write" but belongs at the task board.
+const adapters = [webAdapter, terminalAdapter, archiveAdapter, taskAdapter, codeAdapter, fallbackAdapter];
+
+function fitTimeline(cues: SceneCue[], maxDuration: number) {
+  const duration = cues.at(-1) ? cues.at(-1)!.start + cues.at(-1)!.duration : 0;
+  if (duration <= maxDuration) return cues;
+  const scale = maxDuration / duration;
+  let cursor = 0;
+  return cues.map((cue) => {
+    const adjusted = { ...cue, start: cursor, duration: Math.max(90, Math.round(cue.duration * scale)) };
+    cursor += adjusted.duration;
+    return adjusted;
+  });
+}
 
 function compileResult(node: TraceNode, b: CueBuilder) {
   const zone = toolZone(node.tool ?? "") as string;
@@ -261,6 +275,7 @@ export function compileScene(trace: TurnTrace, cut: PlaybackCut = "director") {
       skippable: true,
     });
   }
-  return b.cues;
+  // Short traces retain their cinematic pacing. Large real-world tasks are
+  // adaptively compressed so a complete workshop tour remains watchable.
+  return fitTimeline(b.cues, cut === "compact" ? 35_000 : 90_000);
 }
-

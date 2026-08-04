@@ -89,7 +89,12 @@ export function compileTurnTraces(
       });
     }
 
+    let terminalMessage: OpenCodeMessage | undefined;
     for (const message of children) {
+      // A turn is semantically closed by its first terminal assistant message.
+      // Some server/plugin combinations may briefly expose duplicate stop
+      // messages or a trailing empty step-start; those belong outside this turn.
+      if (terminalMessage) break;
       const parts = message.parts ?? [];
       for (const part of parts) {
         if (part.type === "step-start") {
@@ -115,9 +120,12 @@ export function compileTurnTraces(
           nodes.push(node(message, part, "answer", ++sequence, { exactText: String(part.text ?? "") }));
         }
       }
+      if (message.info?.finish === "stop" || message.info?.finish === "error") {
+        terminalMessage = message;
+      }
     }
 
-    const finalMessage = children.at(-1);
+    const finalMessage = terminalMessage ?? children.at(-1);
     const status = finalMessage?.info?.finish === "stop"
       ? "complete"
       : finalMessage?.info?.finish === "error"
@@ -144,4 +152,3 @@ export function compileTurnTraces(
   }
   return traces;
 }
-

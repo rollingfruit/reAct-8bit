@@ -4,19 +4,23 @@ import { personaFor, toolZone } from "../studio.js";
 
 const WIDTH = 400;
 const HEIGHT = 240;
+const FRAME_SIZE = 96;
+const ACTOR_SOURCE = { x: 18, y: 0, width: 60, height: 94 };
+const ACTOR_WIDTH = 38;
+const ACTOR_HEIGHT = 56;
 
 type Point = { x: number; y: number };
 
 const zones: Record<string, Point> = {
   center: { x: 200, y: 139 },
-  terminal: { x: 49, y: 78 },
-  archive: { x: 124, y: 65 },
-  code: { x: 276, y: 65 },
-  portal: { x: 350, y: 78 },
-  todo: { x: 49, y: 205 },
-  subagent: { x: 124, y: 205 },
-  answer: { x: 276, y: 203 },
-  generic: { x: 350, y: 205 },
+  terminal: { x: 48, y: 91 },
+  archive: { x: 132, y: 91 },
+  code: { x: 268, y: 91 },
+  portal: { x: 352, y: 91 },
+  todo: { x: 48, y: 215 },
+  subagent: { x: 132, y: 215 },
+  answer: { x: 268, y: 215 },
+  generic: { x: 352, y: 215 },
 };
 const CENTER: Point = { x: 200, y: 139 };
 
@@ -25,14 +29,14 @@ function zonePoint(zone?: string) {
 }
 
 const stations = [
-  { zone: "terminal", label: "SHELL", x: 49, y: 48, color: "#65e6a8" },
-  { zone: "archive", label: "FILES", x: 124, y: 42, color: "#ffad7a" },
-  { zone: "code", label: "CODE", x: 276, y: 42, color: "#56d7ff" },
-  { zone: "portal", label: "WEB", x: 350, y: 48, color: "#b593ff" },
-  { zone: "todo", label: "QUESTS", x: 49, y: 182, color: "#ffc857" },
-  { zone: "subagent", label: "SPAWN", x: 124, y: 182, color: "#56d7ff" },
-  { zone: "answer", label: "ANSWER", x: 276, y: 182, color: "#65e6a8" },
-  { zone: "generic", label: "LAB", x: 350, y: 182, color: "#ffc857" },
+  { zone: "terminal", label: "SHELL", x: 48, y: 48, color: "#65e6a8" },
+  { zone: "archive", label: "FILES", x: 132, y: 48, color: "#ffad7a" },
+  { zone: "code", label: "CODE", x: 268, y: 48, color: "#56d7ff" },
+  { zone: "portal", label: "WEB", x: 352, y: 48, color: "#b593ff" },
+  { zone: "todo", label: "QUESTS", x: 48, y: 176, color: "#ffc857" },
+  { zone: "subagent", label: "SPAWN", x: 132, y: 176, color: "#56d7ff" },
+  { zone: "answer", label: "ANSWER", x: 268, y: 176, color: "#65e6a8" },
+  { zone: "generic", label: "LAB", x: 352, y: 176, color: "#ffc857" },
 ] as const;
 
 function ease(value: number) {
@@ -67,6 +71,19 @@ export class CanvasSceneRenderer {
       this.actionSprite = actionSprite;
     };
     actionSprite.src = "/assets/studio-v1/actions/sheet-transparent.png";
+    const room = this.canvas.parentElement;
+    if (room && typeof ResizeObserver !== "undefined") {
+      const resize = () => {
+        const availableWidth = room.clientWidth;
+        const availableHeight = room.clientHeight;
+        const rawScale = Math.min(availableWidth / WIDTH, availableHeight / HEIGHT);
+        const scale = rawScale >= 2 ? Math.max(1, Math.floor(rawScale)) : rawScale;
+        this.canvas.style.width = `${Math.floor(WIDTH * scale)}px`;
+        this.canvas.style.height = `${Math.floor(HEIGHT * scale)}px`;
+      };
+      new ResizeObserver(resize).observe(room);
+      resize();
+    }
     this.draw([], {
       status: "paused",
       time: 0,
@@ -122,11 +139,17 @@ export class CanvasSceneRenderer {
 
   private background(cue?: SceneCue) {
     const ctx = this.context;
-    ctx.fillStyle = "#101b24";
+    ctx.fillStyle = "#0d1821";
     ctx.fillRect(0, 0, WIDTH, 132);
-    ctx.fillStyle = "#342925";
+    ctx.fillStyle = "#302723";
     ctx.fillRect(0, 132, WIDTH, HEIGHT - 132);
-    ctx.strokeStyle = "rgba(115,145,164,.18)";
+    ctx.fillStyle = "#081018";
+    ctx.fillRect(0, 0, WIDTH, 9);
+    ctx.fillStyle = "#1a2b36";
+    ctx.fillRect(0, 9, WIDTH, 4);
+    ctx.fillStyle = "rgba(86,215,255,.16)";
+    for (let x = 16; x < WIDTH; x += 48) ctx.fillRect(x, 5, 18, 2);
+    ctx.strokeStyle = "rgba(115,145,164,.16)";
     ctx.lineWidth = 1;
     for (let x = 0; x <= WIDTH; x += 16) {
       ctx.beginPath();
@@ -138,6 +161,17 @@ export class CanvasSceneRenderer {
       ctx.beginPath();
       ctx.moveTo(0, y + 0.5);
       ctx.lineTo(WIDTH, y + 0.5);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "rgba(7,13,18,.36)";
+    ctx.fillRect(0, 123, WIDTH, 9);
+    ctx.fillStyle = "#181f24";
+    ctx.fillRect(0, 128, WIDTH, 4);
+    ctx.strokeStyle = "rgba(255,200,87,.11)";
+    for (let x = 8; x < WIDTH; x += 32) {
+      ctx.beginPath();
+      ctx.moveTo(200, 132);
+      ctx.lineTo(x, HEIGHT);
       ctx.stroke();
     }
     const glow = zonePoint(cue?.zone);
@@ -156,37 +190,84 @@ export class CanvasSceneRenderer {
       const active = cue?.zone === station.zone;
       ctx.save();
       ctx.translate(station.x, station.y);
-      ctx.fillStyle = active ? station.color : "#263541";
-      ctx.globalAlpha = active ? 1 : 0.72;
-      ctx.fillRect(-20, -13, 40, 24);
-      ctx.fillStyle = "#081016";
-      ctx.fillRect(-16, -9, 32, 16);
-      ctx.fillStyle = active ? station.color : "#526371";
+      if (active) {
+        ctx.fillStyle = `${station.color}22`;
+        ctx.fillRect(-32, -28, 64, 57);
+        ctx.strokeStyle = station.color;
+        ctx.strokeRect(-31.5, -27.5, 63, 56);
+      }
+      ctx.globalAlpha = active ? 1 : 0.92;
+      ctx.fillStyle = "#314351";
+      ctx.fillRect(-25, -16, 50, 29);
+      ctx.fillStyle = "#0a1117";
+      ctx.fillRect(-21, -12, 42, 21);
+      ctx.fillStyle = active ? station.color : "#718494";
       if (station.zone === "portal") {
-        ctx.fillRect(-7, -5, 14, 11);
-        ctx.fillStyle = active ? "#d9caff" : "#465467";
-        ctx.fillRect(-4, -2, 8, 7);
+        ctx.fillRect(-13, -10, 26, 20);
+        ctx.fillStyle = "#191334";
+        ctx.fillRect(-9, -7, 18, 17);
+        ctx.fillStyle = active ? "#d9caff" : "#6c5c99";
+        ctx.fillRect(-5, -3, 10, 10);
       } else if (station.zone === "archive") {
-        for (let index = 0; index < 4; index += 1) {
-          ctx.fillStyle = ["#e58d6d", "#63a9bb", "#a088d2", "#f1b879"][index]!;
-          ctx.fillRect(-13 + index * 7, -4 - (index % 2) * 3, 5, 11 + (index % 2) * 3);
+        ctx.fillStyle = "#49372f";
+        ctx.fillRect(-18, -9, 36, 17);
+        for (let index = 0; index < 5; index += 1) {
+          ctx.fillStyle = ["#e58d6d", "#63a9bb", "#a088d2", "#f1b879", "#69c58b"][index]!;
+          ctx.fillRect(-15 + index * 7, -5 - (index % 2) * 3, 5, 12 + (index % 2) * 3);
         }
       } else if (station.zone === "todo") {
         ctx.fillStyle = "#c4a56d";
-        ctx.fillRect(-11, -7, 22, 14);
+        ctx.fillRect(-16, -10, 32, 20);
         ctx.fillStyle = "#33291f";
-        ctx.fillRect(-7, -3, 3, 3);
-        ctx.fillRect(-7, 2, 3, 3);
+        ctx.fillRect(-11, -5, 3, 3);
+        ctx.fillRect(-11, 1, 3, 3);
+        ctx.fillStyle = active ? "#65e6a8" : "#806e4e";
+        ctx.fillRect(-5, -5, 14, 2);
+        ctx.fillRect(-5, 1, 10, 2);
+      } else if (station.zone === "subagent") {
+        ctx.fillStyle = active ? "#17485f" : "#1b303d";
+        ctx.fillRect(-15, -10, 30, 20);
+        ctx.fillStyle = active ? station.color : "#547183";
+        ctx.fillRect(-2, -7, 4, 14);
+        ctx.fillRect(-7, -2, 14, 4);
+      } else if (station.zone === "answer") {
+        ctx.fillStyle = "#10251f";
+        ctx.fillRect(-17, -9, 34, 17);
+        ctx.fillStyle = active ? station.color : "#688378";
+        ctx.fillRect(-11, -4, 22, 3);
+        ctx.fillRect(-8, 2, 16, 3);
+      } else if (station.zone === "generic") {
+        ctx.fillStyle = "#202532";
+        ctx.fillRect(-16, -10, 32, 19);
+        ctx.fillStyle = active ? station.color : "#8c7d51";
+        ctx.fillRect(-2, -7, 4, 4);
+        ctx.fillRect(-5, -3, 10, 3);
+        ctx.fillRect(-2, 2, 4, 4);
+      } else if (station.zone === "code") {
+        ctx.fillStyle = active ? "#153340" : "#172630";
+        ctx.fillRect(-18, -9, 36, 17);
+        ctx.fillStyle = "#65e6a8";
+        ctx.fillRect(-13, -4, 10, 2);
+        ctx.fillRect(-10, 1, 7, 2);
+        ctx.fillStyle = "#ff6b76";
+        ctx.fillRect(3, -4, 10, 2);
+        ctx.fillRect(3, 1, 7, 2);
       } else {
-        ctx.fillStyle = active ? station.color : "#60717d";
-        ctx.fillRect(-8, -3, 16, 5);
+        ctx.fillStyle = "#071912";
+        ctx.fillRect(-18, -9, 36, 17);
+        ctx.fillStyle = active ? station.color : "#547365";
+        ctx.fillRect(-13, 2, 16, 2);
+        ctx.fillRect(-13, -3, 8, 2);
       }
       ctx.fillStyle = "#0a0f14";
-      ctx.fillRect(-23, 12, 46, 5);
+      ctx.fillRect(-29, 13, 58, 6);
+      ctx.fillStyle = "#26333d";
+      ctx.fillRect(-24, 19, 5, 5);
+      ctx.fillRect(19, 19, 5, 5);
       ctx.fillStyle = active ? station.color : "#93a1ad";
-      ctx.font = "5px monospace";
+      ctx.font = "bold 6px monospace";
       ctx.textAlign = "center";
-      ctx.fillText(station.label, 0, -18);
+      ctx.fillText(station.label, 0, -22);
       ctx.restore();
     }
     ctx.strokeStyle = "rgba(86,215,255,.35)";
@@ -241,6 +322,42 @@ export class CanvasSceneRenderer {
       const text = String(cue.caption ?? "").slice(0, Math.floor(String(cue.caption ?? "").length * progress));
       ctx.fillText(text.slice(0, 24), 24, 43);
     }
+    if (cue.action === "diff-lines") {
+      const visible = Math.max(1, Math.ceil(progress * 5));
+      for (let index = 0; index < visible; index += 1) {
+        ctx.fillStyle = index % 2 ? "#ff6b76" : "#65e6a8";
+        ctx.fillRect(point.x - 17, point.y - 42 + index * 5, 7, 2);
+        ctx.fillStyle = index % 2 ? "#553039" : "#285443";
+        ctx.fillRect(point.x - 7, point.y - 42 + index * 5, 24 - index * 2, 2);
+      }
+    }
+    if (cue.action === "update-board") {
+      const count = Math.max(1, Math.ceil(progress * 3));
+      for (let index = 0; index < count; index += 1) {
+        ctx.fillStyle = ["#ffc857", "#65e6a8", "#56d7ff"][index]!;
+        ctx.fillRect(point.x - 18 + index * 12, point.y - 43 + (index % 2) * 5, 10, 8);
+        ctx.fillStyle = "#3a3020";
+        ctx.fillRect(point.x - 16 + index * 12, point.y - 40 + (index % 2) * 5, 6, 1);
+      }
+    }
+    if (cue.action === "lab-input") {
+      ctx.fillStyle = "#8bdcff";
+      ctx.fillRect(point.x - 5, point.y - 43, 10, 3);
+      ctx.fillRect(point.x - 3, point.y - 40, 6, 7);
+      ctx.fillStyle = progress > 0.5 ? "#ffc857" : "#b593ff";
+      ctx.fillRect(point.x - 7, point.y - 34, 14, 8);
+      ctx.fillRect(point.x - 5, point.y - 36, 10, 2);
+    }
+    if (cue.action === "seal-answer") {
+      ctx.fillStyle = "#f3e8b2";
+      ctx.fillRect(point.x - 15, point.y - 43, 30, 19);
+      ctx.fillStyle = "#b44752";
+      ctx.fillRect(point.x - 7, point.y - 36, 14, 7);
+      ctx.fillStyle = "#f7c0c5";
+      ctx.font = "bold 5px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("DONE", point.x, point.y - 31);
+    }
   }
 
   private actorPosition(cues: SceneCue[], snapshot: TimelineSnapshot) {
@@ -267,14 +384,20 @@ export class CanvasSceneRenderer {
     const walking = cue?.action === "move";
     const bounce = walking ? (Math.floor(progress * 12) % 2) * 2 : cue?.phase === "thought" ? Math.round(Math.sin(progress * Math.PI * 2)) : 0;
     if (this.sprite && walking) {
-      const cellWidth = this.sprite.width / 4;
-      const cellHeight = this.sprite.height / 4;
       const column = Math.floor(progress * 8) % 4;
       const row = point.x < CENTER.x ? 1 : 2;
-      ctx.drawImage(this.sprite, column * cellWidth, row * cellHeight, cellWidth, cellHeight, point.x - 10, point.y - 27 - bounce, 20, 28);
+      ctx.drawImage(
+        this.sprite,
+        column * FRAME_SIZE + ACTOR_SOURCE.x,
+        row * FRAME_SIZE + ACTOR_SOURCE.y,
+        ACTOR_SOURCE.width,
+        ACTOR_SOURCE.height,
+        Math.round(point.x - ACTOR_WIDTH / 2),
+        Math.round(point.y - ACTOR_HEIGHT - bounce),
+        ACTOR_WIDTH,
+        ACTOR_HEIGHT,
+      );
     } else if (this.actionSprite && cue) {
-      const cellWidth = this.actionSprite.width / 4;
-      const cellHeight = this.actionSprite.height / 4;
       const frame = Math.floor(progress * 8) % 4;
       let row = 3;
       let column = 0;
@@ -296,14 +419,14 @@ export class CanvasSceneRenderer {
       }
       ctx.drawImage(
         this.actionSprite,
-        column * cellWidth,
-        row * cellHeight,
-        cellWidth,
-        cellHeight,
-        point.x - 10,
-        point.y - 27 - bounce,
-        20,
-        28,
+        column * FRAME_SIZE + ACTOR_SOURCE.x,
+        row * FRAME_SIZE + ACTOR_SOURCE.y,
+        ACTOR_SOURCE.width,
+        ACTOR_SOURCE.height,
+        Math.round(point.x - ACTOR_WIDTH / 2),
+        Math.round(point.y - ACTOR_HEIGHT - bounce),
+        ACTOR_WIDTH,
+        ACTOR_HEIGHT,
       );
     } else {
       ctx.fillStyle = "#15181d";
@@ -323,11 +446,11 @@ export class CanvasSceneRenderer {
       ctx.fillRect(Math.round(point.x + 2), Math.round(point.y - 16 - bounce), 2, 2);
     }
     ctx.fillStyle = "rgba(8,12,17,.86)";
-    ctx.fillRect(point.x - 21, point.y + 10, 42, 10);
+    ctx.fillRect(point.x - 24, point.y + 3, 48, 11);
     ctx.fillStyle = persona.color;
-    ctx.font = "5px monospace";
+    ctx.font = "bold 6px monospace";
     ctx.textAlign = "center";
-    ctx.fillText(persona.name, point.x, point.y + 17);
+    ctx.fillText(`${persona.glyph} ${persona.name}`, point.x, point.y + 11);
   }
 
   private foreground(cue: SceneCue | undefined, progress: number) {

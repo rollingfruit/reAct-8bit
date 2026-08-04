@@ -63,6 +63,54 @@ function weatherHistory() {
   ];
 }
 
+function allWorkstationsHistory() {
+  const time = 10_000;
+  const tools = [
+    ["todowrite", { todos: [{ content: "巡检全部工作台", status: "in_progress" }] }, "todo updated"],
+    ["bash", { command: "pwd && node --version" }, "/project\nv20.19.0"],
+    ["glob", { pattern: "web/**/*.ts" }, JSON.stringify(["web/main.ts", "web/studio.ts"])],
+    ["grep", { pattern: "SceneCue", path: "web" }, "web/main.ts: SceneCue"],
+    ["read", { filePath: "README.md", offset: 1, limit: 20 }, "# ReAct 8-bit Agent Studio"],
+    ["websearch", { query: "ReAct prompting paper official" }, JSON.stringify({ results: [{ title: "ReAct paper", url: "https://arxiv.org/abs/2210.03629" }] })],
+    ["write", { filePath: "/tmp/react-studio-probe.md", content: "station probe" }, "Wrote file"],
+    ["edit", { filePath: "/tmp/react-studio-probe.md", oldString: "probe", newString: "probe complete" }, "Edit applied"],
+    ["task", { description: "independent verification", prompt: "Confirm the probe text" }, "Subtask complete"],
+    ["artifact_inspect", { target: "/tmp/react-studio-probe.md" }, JSON.stringify({ valid: true })],
+  ] as const;
+  const parts: Record<string, unknown>[] = [
+    { id: "prt_start_all", type: "step-start" },
+    { id: "prt_reason_all", type: "reasoning", text: "I will plan the work, inspect the project, verify a source, edit a safe probe, delegate a check, and report.", time: { start: time + 1, end: time + 2 } },
+  ];
+  tools.forEach(([tool, input, output], index) => {
+    parts.push({
+      id: `prt_all_${index}`,
+      type: "tool",
+      callID: `call_all_${index}`,
+      tool,
+      state: { status: "completed", input, output, time: { start: time + 10 + index * 10, end: time + 15 + index * 10 } },
+    });
+  });
+  parts.push({ id: "prt_answer_all", type: "text", text: "全部工作台巡检完成。", time: { start: time + 120, end: time + 125 } });
+  return [
+    {
+      info: { id: "msg_all_user", sessionID: "ses_all", role: "user", agent: "build", time: { created: time } },
+      parts: [{ id: "prt_all_user", type: "text", text: "执行一次覆盖全部工作台的复杂巡检" }],
+    },
+    {
+      info: {
+        id: "msg_all_assistant",
+        sessionID: "ses_all",
+        role: "assistant",
+        parentID: "msg_all_user",
+        agent: "build",
+        finish: "stop",
+        time: { created: time + 1, completed: time + 130 },
+      },
+      parts,
+    },
+  ];
+}
+
 test("groups assistant rounds by parent message into a complete trace", () => {
   const traces = compileTurnTraces(weatherHistory());
   const trace = traces.get("msg_user")!;
@@ -72,6 +120,33 @@ test("groups assistant rounds by parent message into a complete trace", () => {
   assert.equal(trace.nodes.filter((node) => node.kind === "tool-call").length, 1);
   assert.equal(trace.nodes.filter((node) => node.kind === "tool-result").length, 1);
   assert.equal(trace.nodes.find((node) => node.kind === "tool-call")?.callId, "call_weather");
+});
+
+test("treats the first stop as the turn boundary and ignores trailing duplicate answers", () => {
+  const history: any[] = weatherHistory();
+  const completed = history.at(-1)!;
+  history.push(
+    {
+      ...completed,
+      info: { ...completed.info, id: "msg_duplicate_stop", time: { created: 9_000, completed: 9_100 } },
+      parts: [{ id: "prt_duplicate", type: "text", text: "南京今天多云，27~36°C。高温天气，注意防暑。" }],
+    },
+    {
+      info: {
+        id: "msg_trailing_empty",
+        sessionID: "ses_weather",
+        role: "assistant",
+        parentID: "msg_user",
+        agent: "build",
+        time: { created: 9_200 },
+      },
+      parts: [{ id: "prt_trailing_start", type: "step-start" }],
+    },
+  );
+  const trace = compileTurnTraces(history).get("msg_user")!;
+  assert.equal(trace.status, "complete");
+  assert.equal(trace.nodes.filter((node) => node.kind === "answer").length, 1);
+  assert.ok(!trace.nodes.some((node) => node.sourceMessageIds.includes("msg_trailing_empty")));
 });
 
 test("compiles a deterministic cinematic web trace with source evidence", () => {
@@ -100,6 +175,25 @@ test("timeline supports seek, stepping and speed without changing cue data", () 
   assert.equal(player.snapshot.speed, 2);
   player.dispose();
   assert.ok(snapshots.length >= 4);
+});
+
+test("a complex turn visits every workshop station with real source references", () => {
+  const trace = compileTurnTraces(allWorkstationsHistory()).get("msg_all_user")!;
+  const cues = compileScene(trace);
+  const visited = new Set(cues.filter((cue) => cue.action === "move").map((cue) => cue.zone));
+  assert.deepEqual(
+    [...visited].sort(),
+    ["answer", "archive", "center", "code", "generic", "portal", "subagent", "terminal", "todo"].sort(),
+  );
+  assert.ok(cues.length >= 70, `expected a cinematic all-stations trace, got ${cues.length}`);
+  assert.ok(cues.some((cue) => cue.action === "update-board"));
+  assert.ok(cues.some((cue) => cue.action === "diff-lines"));
+  assert.ok(cues.some((cue) => cue.action === "handoff-task"));
+  assert.ok(cues.some((cue) => cue.action === "lab-input"));
+  assert.ok(cues.every((cue) => cue.evidence === "ambient" || cue.traceNodeIds.length > 0));
+  assert.ok(cues.at(-1)!.start + cues.at(-1)!.duration <= 90_000);
+  const compact = compileScene(trace, "compact");
+  assert.ok(compact.at(-1)!.start + compact.at(-1)!.duration <= 35_000);
 });
 
 test("generated character sheet passes sprite QC", async () => {

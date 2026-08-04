@@ -338,6 +338,11 @@ function updatePlayback(snapshot: TimelineSnapshot) {
     }
   } else {
     sceneCaption.hidden = true;
+    if (!activeCues.length) {
+      timelineLabel.textContent = "选择一条用户消息开始学习";
+      document.querySelector("#currentActivity")!.textContent = "等待 Agent...";
+      room.classList.remove("is-replaying");
+    }
   }
   if (snapshot.status === "completed" && !completionNotified) {
     completionNotified = true;
@@ -504,11 +509,15 @@ function renderHistory(data: any[]) {
   rebuildReplayStore(data);
   messagesElement.innerHTML = "";
   cardIndex.clear();
+  const terminalParents = new Set<string>();
   for (const message of data) {
     const role = message.info?.role ?? "system";
     const messageId = String(message.info?.id ?? "");
+    const parentId = String(message.info?.parentID ?? "");
+    if (role === "assistant" && parentId && terminalParents.has(parentId)) continue;
     for (const part of message.parts ?? []) {
       if (!["text", "reasoning", "tool"].includes(part.type)) continue;
+      if ((part.type === "text" || part.type === "reasoning") && !String(part.text ?? "").trim()) continue;
       if (part.type === "tool") {
         const state = part.state ?? {};
         const card = makeCard(
@@ -525,6 +534,9 @@ function renderHistory(data: any[]) {
         identifyMessage(card, messageId, role === "user");
         messagesElement.append(card);
       }
+    }
+    if (role === "assistant" && parentId && ["stop", "error"].includes(message.info?.finish)) {
+      terminalParents.add(parentId);
     }
   }
   updateReplayButtons();
@@ -573,11 +585,11 @@ async function selectSession(
 ) {
   currentSession = sessionId;
   routedMessageId = options.messageId ?? "";
-  routedCueId = new URL(location.href).searchParams.get("cue") ?? "";
+  routedCueId = routedMessageId ? new URL(location.href).searchParams.get("cue") ?? "" : "";
   director.reset();
-  player.setCues([]);
   activeTrace = undefined;
   activeCues = [];
+  player.setCues([]);
   eventCount = 0;
   activeAgents.clear();
   document.querySelector("#eventCount")!.textContent = "0";
